@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # grove installer
-# Usage: curl -fsSL https://grove-code.github.io/scripts/scripts/install.sh | bash
+# Usage: curl -fsSL https://grove-code.github.io/scripts/install.sh | bash
 #
 # Installs to ~/.grove/bin by default (no sudo required)
 #
