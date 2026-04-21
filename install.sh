@@ -269,8 +269,10 @@ done
 # ── stop daemon ─────────────────────────────────────────────
 # grove off now falls back to lsof + SIGTERM so a wedged beam or stale
 # pidfile doesn't block upgrades. Ignore exit code regardless.
+# </dev/null so the BEAM VM (inherited by `grove off`) doesn't consume
+# bytes from our pipe when run as `curl … | bash`.
 if [[ -x "${install_dir}/grove" ]]; then
-    "${install_dir}/grove" off 2>/dev/null || true
+    "${install_dir}/grove" off </dev/null 2>/dev/null || true
 fi
 
 # Belt-and-suspenders: if the existing grove binary is too old to do the
@@ -368,9 +370,13 @@ cat > "${grove_home}/manifest.json" <<MANIFEST
 MANIFEST
 
 # ── validate ────────────────────────────────────────────────
+# </dev/null on every child: when bash is fed the script via a pipe
+# (curl … | bash), the BEAM VM will consume stdin and steal bytes
+# the shell still needs to parse. Without this the script silently
+# exits after validate, before the 'installed' banner renders.
 validate_ok=1
-"${grove_home}/elixir/bin/grove" eval 'IO.puts("ok")' &>/dev/null || validate_ok=0
-"${grove_home}/bin/grove" --version &>/dev/null || validate_ok=0
+"${grove_home}/elixir/bin/grove" eval 'IO.puts("ok")' </dev/null &>/dev/null || validate_ok=0
+"${grove_home}/bin/grove" --version </dev/null &>/dev/null || validate_ok=0
 
 # ── ui: validate (bar 3 green) ─────────────────────────────
 for pct in 25 50 75 100; do
