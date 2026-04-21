@@ -174,10 +174,15 @@ if [[ -d "${grove_home}/erts/erts-${erts_version}" ]]; then
 fi
 
 # ── ui: skeleton ────────────────────────────────────────────
-# Anchor the cursor at the top of the box so every ui_redraw can
-# `\033[u` back to this exact row instead of doing relative moves.
-echo ""
+# Reserve 8 rows of viewport before saving the cursor anchor. If we're
+# near the bottom of the terminal, this forces the scroll to happen now
+# (with the cursor still in-place), so the saved position won't shift
+# off-screen when we start writing the box content. Critical for
+# `\033[u` restores to land on the correct row.
+printf '\n\n\n\n\n\n\n\n\033[8A'
 echo -en "\033[s"
+
+echo ""
 echo -e "  ${dim}╭─${nc}  ${header}"
 echo -e "  ${dim}│ ${nc}"
 echo -e "  ${dim}│ ${nc}  ${dim}──────────${nc}  ${dim}──────────${nc}  ${dim}──────────${nc}"
