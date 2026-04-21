@@ -71,13 +71,26 @@ ui_bar_g() {
 }
 
 # ── helpers ─────────────────────────────────────────────────
+# Accept-Encoding: identity defeats corp MITM proxies that recompress
+# gzip tarballs mid-flight (re-compression changes bytes → sha256
+# mismatch on otherwise-valid downloads). Applies to both curl + wget.
 download() {
     if command -v curl &>/dev/null; then
-        curl -fsSL "$1" -o "$2"
+        curl -fsSL -H "Accept-Encoding: identity" "$1" -o "$2"
     elif command -v wget &>/dev/null; then
-        wget -qO "$2" "$1"
+        wget -q --header="Accept-Encoding: identity" -O "$2" "$1"
     else
         die "Neither curl nor wget found"
+    fi
+}
+
+# HEAD probe — does the URL resolve to 200 without pulling the body?
+# Used for pre-flight validation so we fail BEFORE stopping the daemon.
+head_probe() {
+    if command -v curl &>/dev/null; then
+        curl -fsSIL -H "Accept-Encoding: identity" "$1" -o /dev/null
+    else
+        return 0
     fi
 }
 
@@ -113,12 +126,16 @@ esac
 platform="${os}-${arch}"
 
 # ── resolve version ─────────────────────────────────────────
+# Identity encoding defeats corp MITM recompression on the JSON /
+# redirect responses too, not just the tarballs.
 if [[ -z "$version" ]]; then
     if [[ "$channel" != "stable" ]]; then
         if command -v curl &>/dev/null; then
-            releases_json=$(curl -fsSL "https://api.github.com/repos/${repo}/releases")
+            releases_json=$(curl -fsSL -H "Accept-Encoding: identity" \
+                "https://api.github.com/repos/${repo}/releases")
         else
-            releases_json=$(wget -qO- "https://api.github.com/repos/${repo}/releases")
+            releases_json=$(wget -q --header="Accept-Encoding: identity" -O- \
+                "https://api.github.com/repos/${repo}/releases")
         fi
         version=$(echo "$releases_json" | \
             grep -oE '"tag_name": "v[^"]+-'"${channel}"'\.[0-9]+"' | \
@@ -128,9 +145,13 @@ if [[ -z "$version" ]]; then
         [[ -z "$version" ]] && die "No ${channel} releases found"
     else
         if command -v curl &>/dev/null; then
-            version=$(curl -fsSI "https://github.com/${repo}/releases/latest" | grep -i '^location:' | sed -E 's|.*/tag/([^[:space:]]+).*|\1|')
+            version=$(curl -fsSI -H "Accept-Encoding: identity" \
+                "https://github.com/${repo}/releases/latest" | \
+                grep -i '^location:' | sed -E 's|.*/tag/([^[:space:]]+).*|\1|')
         else
-            version=$(wget --spider -S "https://github.com/${repo}/releases/latest" 2>&1 | grep -i 'location:' | tail -1 | sed -E 's|.*/tag/([^[:space:]]+).*|\1|')
+            version=$(wget --spider -S --header="Accept-Encoding: identity" \
+                "https://github.com/${repo}/releases/latest" 2>&1 | \
+                grep -i 'location:' | tail -1 | sed -E 's|.*/tag/([^[:space:]]+).*|\1|')
         fi
         [[ -z "$version" ]] && die "Failed to fetch latest stable version"
     fi
@@ -141,7 +162,14 @@ bw=10
 
 # ── tmp ─────────────────────────────────────────────────────
 tmp_dir=$(mktemp -d)
-trap "rm -rf $tmp_dir" EXIT
+# Single EXIT trap handles tmp cleanup + any lock release. Later
+# blocks *add* to this cleanup rather than overwriting, using
+# trap -p to chain.
+cleanup() {
+    rm -rf "$tmp_dir"
+    [[ -n "${lock_dir:-}" ]] && [[ -d "$lock_dir" ]] && rmdir "$lock_dir" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 # ── manifest ────────────────────────────────────────────────
 if [[ "$channel" == "stable" ]]; then
@@ -156,6 +184,38 @@ erts_version=$(json_val "d['components']['erts']['version']" "${tmp_dir}/manifes
 cli_sha=$(json_val "d['components']['cli']['sha256']['${platform}']" "${tmp_dir}/manifest.json")
 elixir_sha=$(json_val "d['components']['elixir']['sha256']['${platform}']" "${tmp_dir}/manifest.json")
 erts_sha=$(json_val "d['components']['erts']['sha256'].get('${platform}', '')" "${tmp_dir}/manifest.json")
+
+# ── pre-flight ──────────────────────────────────────────────
+# HEAD all three tarball URLs BEFORE we stop the daemon or touch any
+# local state. Fails fast on: stale CDN manifest (asset missing from
+# that release), corp-network TLS issues that show up on GitHub's
+# objects CDN even when api.github.com works, 404 for platform-specific
+# assets. Cheap: 3 HEAD requests against already-warm GitHub CDN.
+base_url="https://github.com/${repo}/releases/download/${version}"
+for asset in "grove-cli-${platform}.tar.gz" \
+             "grove-elixir-${platform}.tar.gz" \
+             "grove-erts-${platform}.tar.gz"; do
+    head_probe "${base_url}/${asset}" \
+        || die "release asset unreachable: ${asset} (check manifest / network / TLS)"
+done
+
+# ── concurrency lock ────────────────────────────────────────
+# `mkdir` is atomic across all POSIX filesystems — the only process
+# that succeeds is the one that created the dir. Works uniformly on
+# macOS (no flock) and linux. The dir is removed by the EXIT trap.
+mkdir -p "${grove_home}"
+lock_dir="${grove_home}/.up.lock.d"
+if ! mkdir "${lock_dir}" 2>/dev/null; then
+    # Lock exists — check if the owner is still alive.
+    owner_pid=$(cat "${lock_dir}/pid" 2>/dev/null || echo "")
+    if [[ "$owner_pid" =~ ^[0-9]+$ ]] && kill -0 "$owner_pid" 2>/dev/null; then
+        die "another install is already running (pid ${owner_pid}, lock: ${lock_dir})"
+    fi
+    # Stale lock — clear and retry once.
+    rm -rf "${lock_dir}"
+    mkdir "${lock_dir}" || die "could not acquire lock: ${lock_dir}"
+fi
+echo "$$" > "${lock_dir}/pid"
 
 # ── check ERTS cache ────────────────────────────────────────
 # Skip ERTS download only if the installed tree has every required OTP lib.
@@ -202,8 +262,7 @@ if [[ "$skip_erts" -eq 1 ]]; then
 fi
 
 # ── fetch (parallel) ────────────────────────────────────────
-base_url="https://github.com/${repo}/releases/download/${version}"
-
+# base_url already set by the pre-flight block above.
 download "${base_url}/grove-cli-${platform}.tar.gz" "${tmp_dir}/cli.tar.gz" &
 pid_cli=$!
 download "${base_url}/grove-elixir-${platform}.tar.gz" "${tmp_dir}/elixir.tar.gz" &
@@ -313,8 +372,19 @@ for pct in 25 50 75 100; do
 done
 
 # ── atomic swap ─────────────────────────────────────────────
+# Ignore SIGINT during the swap window — a half-done swap leaves the
+# install broken. The window is <1s in practice (3 mv operations).
+# Paired ERR trap re-enables SIGINT before dying so cleanup traps and
+# the user's Ctrl-C work again.
+trap 'trap - INT; exit 1' ERR
+trap '' INT
+
+# Keep the last backup around for `grove up --rollback`. Previous older
+# backup is pruned so we don't accumulate: we keep exactly one prior.
 backup="${grove_home}/.backup"
-rm -rf "$backup"
+prev_backup="${grove_home}/.backup-prev"
+rm -rf "$prev_backup"
+[[ -d "$backup" ]] && mv "$backup" "$prev_backup"
 
 if [[ -d "${grove_home}/bin" ]] || [[ -d "${grove_home}/elixir" ]] || [[ -d "${grove_home}/erts" ]]; then
     mkdir -p "$backup"
@@ -337,9 +407,14 @@ if [[ "$swap_failed" -eq 1 ]]; then
         [[ -d "${backup}/elixir" ]] && mv "${backup}/elixir" "${grove_home}/elixir" || true
         [[ -d "${backup}/erts" ]] && mv "${backup}/erts" "${grove_home}/erts" || true
     fi
+    trap - INT
     die "Swap failed, restored from backup"
 fi
-rm -rf "$staging" "$backup"
+
+# Swap complete — re-enable SIGINT + drop the ERR trap. Backup stays
+# on disk; `grove up --rollback` can restore it.
+trap - INT ERR
+rm -rf "$staging"
 
 # ── permissions (parallel) ──────────────────────────────────
 chmod +x "${grove_home}/bin/grove" &
