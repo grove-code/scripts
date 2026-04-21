@@ -404,7 +404,7 @@ fi
 # ── ui: done → start server → show URL ─────────────────────
 if [[ "$validate_ok" -eq 1 ]]; then
     ui_redraw "$green" "$header" \
-        "${green}installed${nc}${dim}, starting server...${nc}" \
+        "${green}taking root${nc}${dim}...${nc}" \
         "${dim}~/.grove/bin/grove${nc}"
 
     # `grove on` spawns the daemon and polls up to 30s for the port.
