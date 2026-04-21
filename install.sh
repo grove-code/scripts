@@ -272,7 +272,7 @@ done
 # </dev/null so the BEAM VM (inherited by `grove off`) doesn't consume
 # bytes from our pipe when run as `curl … | bash`.
 if [[ -x "${install_dir}/grove" ]]; then
-    "${install_dir}/grove" off </dev/null 2>/dev/null || true
+    "${install_dir}/grove" off </dev/null &>/dev/null || true
 fi
 
 # Belt-and-suspenders: if the existing grove binary is too old to do the
@@ -282,10 +282,10 @@ port="${GROVE_PORT:-7777}"
 if command -v lsof &>/dev/null; then
     pids=$(lsof -iTCP:"$port" -sTCP:LISTEN -P -n -t 2>/dev/null || true)
     if [[ -n "$pids" ]]; then
-        echo "$pids" | xargs kill 2>/dev/null || true
+        echo "$pids" | xargs kill &>/dev/null || true
         sleep 1
         pids=$(lsof -iTCP:"$port" -sTCP:LISTEN -P -n -t 2>/dev/null || true)
-        [[ -n "$pids" ]] && echo "$pids" | xargs kill -9 2>/dev/null || true
+        [[ -n "$pids" ]] && echo "$pids" | xargs kill -9 &>/dev/null || true
     fi
 fi
 rm -f "${grove_home}/daemon.pid"
