@@ -180,9 +180,11 @@ fi
 # off-screen when we start writing the box content. Critical for
 # `\033[u` restores to land on the correct row.
 printf '\n\n\n\n\n\n\n\n\033[8A'
-echo -en "\033[s"
 
+# Print the leading blank BEFORE saving so subsequent ui_redraw restores
+# land on the ╭─ row and leave the blank separator untouched.
 echo ""
+echo -en "\033[s"
 echo -e "  ${dim}╭─${nc}  ${header}"
 echo -e "  ${dim}│ ${nc}"
 echo -e "  ${dim}│ ${nc}  ${dim}──────────${nc}  ${dim}──────────${nc}  ${dim}──────────${nc}"
