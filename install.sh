@@ -43,7 +43,9 @@ ui_line() {
 
 ui_redraw() {
     local p="$1" l1="$2" l2="$3" l3="$4"
-    echo -en "\033[6A"
+    # Restore to the cursor position saved by the skeleton (top of box).
+    # Absolute anchor — safe under terminal scroll and stray newlines.
+    echo -en "\033[u"
     ui_line "$p" "╭─" "  ${l1}"
     ui_line "$p" "│ " ""
     ui_line "$p" "│ " "  ${l2}"
@@ -172,7 +174,10 @@ if [[ -d "${grove_home}/erts/erts-${erts_version}" ]]; then
 fi
 
 # ── ui: skeleton ────────────────────────────────────────────
+# Anchor the cursor at the top of the box so every ui_redraw can
+# `\033[u` back to this exact row instead of doing relative moves.
 echo ""
+echo -en "\033[s"
 echo -e "  ${dim}╭─${nc}  ${header}"
 echo -e "  ${dim}│ ${nc}"
 echo -e "  ${dim}│ ${nc}  ${dim}──────────${nc}  ${dim}──────────${nc}  ${dim}──────────${nc}"
