@@ -411,16 +411,18 @@ if [[ "$validate_ok" -eq 1 ]]; then
     "${grove_home}/bin/grove" on </dev/null &>/dev/null &
     boot_pid=$!
 
-    # Typewriter: 14 chars over ~2s = ~0.14s per char.
+    # Typewriter: 14 chars @ 0.05s ≈ 0.7s total.
     phrase="taking root..."
     for ((i=1; i<=${#phrase}; i++)); do
         ui_redraw "$green" "$header" \
             "${green}${phrase:0:$i}${nc}" \
             "${dim}~/.grove/bin/grove${nc}"
-        sleep 0.14
+        sleep 0.05
     done
 
-    # Wait for daemon (grove on has its own 30s timeout).
+    # Hold the full phrase for >=1s so the URL swap doesn't feel abrupt,
+    # then wait for the daemon (grove on has its own 30s timeout).
+    sleep 1.0
     wait "$boot_pid" 2>/dev/null || true
 
     if curl -fsS "http://localhost:${port}/api/daemon/version" </dev/null &>/dev/null; then
