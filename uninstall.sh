@@ -10,13 +10,20 @@ echo "  • ${install_dir}/"
 echo "  • ~/.local/bin/grove symlink (if exists)"
 echo "  • PATH entry from shell config (if added)"
 echo ""
-echo "WARNING: All cloned repositories in ${install_dir}/clones/ will be deleted!"
+echo "WARNING: All cloned repositories in ${install_dir}/code/ will be deleted!"
 echo ""
-read -p "Continue? [y/N] " -n 1 -r
+read -rp "Continue? [y/N] " -n 1
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
   echo "Uninstall cancelled."
   exit 0
+fi
+
+# Stop the daemon before removing files so a running beam doesn't orphan
+# on port 7777 and block the next install. `grove off` already falls back
+# to lsof + SIGKILL if the graceful shutdown hangs.
+if [ -x "${install_dir}/bin/grove" ]; then
+  "${install_dir}/bin/grove" off 2>/dev/null || true
 fi
 
 # Remove symlink from ~/.local/bin if it exists

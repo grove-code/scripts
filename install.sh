@@ -203,9 +203,6 @@ if [[ "$skip_erts" -eq 0 ]]; then
 fi
 
 # Poll file sizes for progress bars
-total_components=2
-[[ "$skip_erts" -eq 0 ]] && total_components=3
-
 while true; do
     # Check if all downloads finished
     all_done=1
@@ -241,13 +238,8 @@ wait $pid_elixir || die "Failed to download Elixir release"
 [[ "$skip_erts" -eq 0 ]] && { wait $pid_erts || die "Failed to download ERTS"; }
 
 # ── ui: all white ───────────────────────────────────────────
-if [[ "$skip_erts" -eq 1 ]]; then
-    ui_redraw "$white" "$header" \
-        "${white}━━━━━━━━━━${nc}  ${white}━━━━━━━━━━${nc}  ${white}━━━━━━━━━━${nc}" ""
-else
-    ui_redraw "$white" "$header" \
-        "${white}━━━━━━━━━━${nc}  ${white}━━━━━━━━━━${nc}  ${white}━━━━━━━━━━${nc}" ""
-fi
+ui_redraw "$white" "$header" \
+    "${white}━━━━━━━━━━${nc}  ${white}━━━━━━━━━━${nc}  ${white}━━━━━━━━━━${nc}" ""
 sleep $t
 
 # ── verify checksums ────────────────────────────────────────
