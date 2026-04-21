@@ -403,21 +403,33 @@ fi
 
 # ── ui: done → start server → show URL ─────────────────────
 if [[ "$validate_ok" -eq 1 ]]; then
-    ui_redraw "$green" "$header" \
-        "${green}taking root${nc}${dim}...${nc}" \
-        "${dim}~/.grove/bin/grove${nc}"
-
-    # `grove on` spawns the daemon and polls up to 30s for the port.
-    # </dev/null keeps the BEAM (spawned by `on`) from consuming bytes
-    # from the install pipe when run as `curl … | bash`.
     port="${GROVE_PORT:-7777}"
-    if "${grove_home}/bin/grove" on </dev/null &>/dev/null; then
+
+    # Kick the daemon off in the background while we type. `grove on`
+    # polls up to 30s for the port itself. </dev/null so the BEAM
+    # doesn't consume bytes from the install pipe (curl … | bash).
+    "${grove_home}/bin/grove" on </dev/null &>/dev/null &
+    boot_pid=$!
+
+    # Typewriter: 14 chars over ~2s = ~0.14s per char.
+    phrase="taking root..."
+    for ((i=1; i<=${#phrase}; i++)); do
+        ui_redraw "$green" "$header" \
+            "${green}${phrase:0:$i}${nc}" \
+            "${dim}~/.grove/bin/grove${nc}"
+        sleep 0.14
+    done
+
+    # Wait for daemon (grove on has its own 30s timeout).
+    wait "$boot_pid" 2>/dev/null || true
+
+    if curl -fsS "http://localhost:${port}/api/daemon/version" </dev/null &>/dev/null; then
         ui_redraw "$green" "$header" \
             "${green}http://localhost:${port}${nc}" \
             "${dim}~/.grove/bin/grove${nc}"
     else
         ui_redraw "$green" "$header" \
-            "${green}installed${nc}${dim} (server didn't start — run 'grove on')${nc}" \
+            "${green}${phrase}${nc}${dim} (server didn't start — run 'grove on')${nc}" \
             "${dim}~/.grove/bin/grove${nc}"
     fi
 else
