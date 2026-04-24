@@ -357,12 +357,29 @@ rm -rf "$staging"
 mkdir -p "${staging}/bin" "${staging}/elixir"
 
 tar -xzf "${tmp_dir}/cli.tar.gz" -C "${staging}/bin" &
+pid_tar_cli=$!
 tar -xzf "${tmp_dir}/elixir.tar.gz" -C "${staging}/elixir" &
+pid_tar_elixir=$!
 if [[ "$skip_erts" -eq 0 ]]; then
     mkdir -p "${staging}/erts"
     tar -xzf "${tmp_dir}/erts.tar.gz" -C "${staging}/erts" &
+    pid_tar_erts=$!
 fi
-wait
+
+# Bare `wait` doesn't propagate exit codes — a silently-failed tar
+# (disk full, gzip re-encoded by a middlebox, I/O error) would leave
+# half-extracted .beam files behind and we'd ship a broken release.
+wait "$pid_tar_cli"    || die "Failed to extract CLI"
+wait "$pid_tar_elixir" || die "Failed to extract Elixir release"
+[[ "$skip_erts" -eq 0 ]] && { wait "$pid_tar_erts" || die "Failed to extract ERTS"; }
+
+# Defence in depth: a few sentinel files must exist and be non-empty.
+# Catches tar reporting 0 but the archive being truncated mid-member.
+for f in "${staging}/bin/grove" \
+         "${staging}/elixir/bin/grove" \
+         "${staging}/elixir/releases/start_erl.data"; do
+    [[ -s "$f" ]] || die "Extraction verification failed: $f missing or empty"
+done
 
 # ── ui: extract (bar 2 green) ──────────────────────────────
 for pct in 25 50 75 100; do
@@ -451,9 +468,14 @@ MANIFEST
 # (curl … | bash), the BEAM VM will consume stdin and steal bytes
 # the shell still needs to parse. Without this the script silently
 # exits after validate, before the 'installed' banner renders.
+#
+# Capture stderr instead of discarding it — when `grove eval` fails
+# we want the actual reason visible in the "validation warnings"
+# output, not a mystery banner.
 validate_ok=1
-"${grove_home}/elixir/bin/grove" eval 'IO.puts("ok")' </dev/null &>/dev/null || validate_ok=0
-"${grove_home}/bin/grove" --version </dev/null &>/dev/null || validate_ok=0
+validate_log="${tmp_dir}/validate.log"
+"${grove_home}/elixir/bin/grove" eval 'IO.puts("ok")' </dev/null >/dev/null 2>"$validate_log" || validate_ok=0
+"${grove_home}/bin/grove" --version </dev/null >/dev/null 2>>"$validate_log" || validate_ok=0
 
 # ── ui: validate (bar 3 green) ─────────────────────────────
 for pct in 25 50 75 100; do
@@ -477,42 +499,47 @@ if [[ -d "$HOME/.local/bin" ]]; then
 fi
 
 # ── ui: done → start server → show URL ─────────────────────
-if [[ "$validate_ok" -eq 1 ]]; then
-    port="${GROVE_PORT:-7777}"
+# Always try to restart the daemon, even if the eval check failed —
+# previously validate_ok=0 skipped the restart entirely, which left
+# users with a killed daemon after every upgrade whenever the heavy
+# `grove eval` precheck hiccuped. The running daemon gives a clearer
+# signal than a mystery "validation warnings" banner.
+port="${GROVE_PORT:-7777}"
 
-    # Kick the daemon off in the background while we type. `grove on`
-    # polls up to 30s for the port itself. </dev/null so the BEAM
-    # doesn't consume bytes from the install pipe (curl … | bash).
-    "${grove_home}/bin/grove" on </dev/null &>/dev/null &
-    boot_pid=$!
+"${grove_home}/bin/grove" on </dev/null &>/dev/null &
+boot_pid=$!
 
-    # Typewriter: 14 chars @ 0.05s ≈ 0.7s total.
-    phrase="taking root..."
-    for ((i=1; i<=${#phrase}; i++)); do
-        ui_redraw "$green" "$header" \
-            "${green}${phrase:0:$i}${nc}" \
-            "${dim}~/.grove/bin/grove${nc}"
-        sleep 0.05
-    done
+phrase="planting roots..."
+for ((i=1; i<=${#phrase}; i++)); do
+    ui_redraw "$green" "$header" \
+        "${green}${phrase:0:$i}${nc}" \
+        "${dim}~/.grove/bin/grove${nc}"
+    sleep 0.05
+done
 
-    # Hold the full phrase for >=1s so the URL swap doesn't feel abrupt,
-    # then wait for the daemon (grove on has its own 30s timeout).
-    sleep 1.0
-    wait "$boot_pid" 2>/dev/null || true
+# Hold the full phrase for >=1s, then wait for the daemon (grove on
+# has its own 30s timeout).
+sleep 1.0
+wait "$boot_pid" 2>/dev/null || true
 
-    if curl -fsS "http://localhost:${port}/api/daemon/version" </dev/null &>/dev/null; then
-        ui_redraw "$green" "$header" \
-            "${green}http://localhost:${port}${nc}" \
-            "${dim}~/.grove/bin/grove${nc}"
-    else
-        ui_redraw "$green" "$header" \
-            "${green}${phrase}${nc}${dim} (server didn't start — run 'grove on')${nc}" \
-            "${dim}~/.grove/bin/grove${nc}"
-    fi
+if curl -fsS "http://localhost:${port}/api/daemon/version" </dev/null &>/dev/null; then
+    ui_redraw "$green" "$header" \
+        "${green}http://localhost:${port}${nc}" \
+        "${dim}~/.grove/bin/grove${nc}"
 else
     ui_redraw "$green" "$header" \
-        "${green}installed${nc} ${dim}(validation warnings)${nc}" \
+        "${green}${phrase}${nc}${dim} (server didn't start — run 'grove on')${nc}" \
         "${dim}~/.grove/bin/grove${nc}"
+fi
+
+# If the pre-flight eval warned about anything, surface it after the
+# banner. Silent otherwise. `grove eval` stderr usually has a real
+# reason (missing .beam, env leak, wrong OTP) that would have been
+# swallowed before.
+if [[ "$validate_ok" -eq 0 ]] && [[ -s "$validate_log" ]]; then
+    echo ""
+    echo -e "${dim}validation warnings:${nc}"
+    sed 's/^/  /' "$validate_log"
 fi
 
 if [[ ":$PATH:" != *":${grove_home}/bin:"* ]] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
