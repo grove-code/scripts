@@ -328,17 +328,17 @@ for pct in 25 50 75 100; do
 done
 
 # ── stop daemon ─────────────────────────────────────────────
-# grove off now falls back to lsof + SIGTERM so a wedged beam or stale
-# pidfile doesn't block upgrades. Ignore exit code regardless.
-# </dev/null so the BEAM VM (inherited by `grove off`) doesn't consume
-# bytes from our pipe when run as `curl … | bash`.
+# grove off now falls back to lsof + SIGTERM so a wedged beam or
+# stale pidfile doesn't block upgrades. Ignore exit code regardless.
+# </dev/null so the BEAM VM (inherited by `grove off`) doesn't
+# consume bytes from our pipe when run as `curl … | bash`.
 if [[ -x "${install_dir}/grove" ]]; then
     "${install_dir}/grove" off </dev/null &>/dev/null || true
 fi
 
-# Belt-and-suspenders: if the existing grove binary is too old to do the
-# lsof fallback, kill by port directly. Matches the manual fix from
-# https://github.com/grove-code/feedback-private/issues/2.
+# Belt-and-suspenders: if the existing grove binary is too old to
+# do the lsof fallback, kill by port directly. Matches the manual
+# fix from https://github.com/grove-code/feedback-private/issues/2.
 port="${GROVE_PORT:-7777}"
 if command -v lsof &>/dev/null; then
     pids=$(lsof -iTCP:"$port" -sTCP:LISTEN -P -n -t 2>/dev/null || true)
@@ -474,7 +474,13 @@ MANIFEST
 # output, not a mystery banner.
 validate_ok=1
 validate_log="${tmp_dir}/validate.log"
-"${grove_home}/elixir/bin/grove" eval 'IO.puts("ok")' </dev/null >/dev/null 2>"$validate_log" || validate_ok=0
+# `env -u RELEASE_*` strips a stale RELEASE_VSN/RELEASE_ROOT/RELEASE_NAME/
+# RELEASE_COOKIE from the user's shell before invoking the elixir wrapper.
+# The wrapper uses ${RELEASE_VSN:-…} to resolve releases/<vsn>/env.sh — a
+# leaked value (e.g. canary.7 from a long-defunct `grove env` source)
+# sends it at a non-existent dir and validation fails. See feedback #29.
+env -u RELEASE_VSN -u RELEASE_ROOT -u RELEASE_NAME -u RELEASE_COOKIE \
+    "${grove_home}/elixir/bin/grove" eval 'IO.puts("ok")' </dev/null >/dev/null 2>"$validate_log" || validate_ok=0
 "${grove_home}/bin/grove" --version </dev/null >/dev/null 2>>"$validate_log" || validate_ok=0
 
 # ── ui: validate (bar 3 green) ─────────────────────────────
