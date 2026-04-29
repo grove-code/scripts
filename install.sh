@@ -474,13 +474,14 @@ MANIFEST
 # output, not a mystery banner.
 validate_ok=1
 validate_log="${tmp_dir}/validate.log"
-# `env -u RELEASE_*` strips a stale RELEASE_VSN/RELEASE_ROOT/RELEASE_NAME/
-# RELEASE_COOKIE from the user's shell before invoking the elixir wrapper.
-# The wrapper uses ${RELEASE_VSN:-…} to resolve releases/<vsn>/env.sh — a
-# leaked value (e.g. canary.7 from a long-defunct `grove env` source)
-# sends it at a non-existent dir and validation fails. See feedback #29.
-env -u RELEASE_VSN -u RELEASE_ROOT -u RELEASE_NAME -u RELEASE_COOKIE \
-    "${grove_home}/elixir/bin/grove" eval 'IO.puts("ok")' </dev/null >/dev/null 2>"$validate_log" || validate_ok=0
+# Strip the entire RELEASE_* namespace from the env before invoking the
+# elixir wrapper — VSN/ROOT/NAME/COOKIE plus SYS_CONFIG / VM_ARGS /
+# REMOTE_VM_ARGS / PROG / NODE / BOOT_SCRIPT / TMP / MODE / COMMAND /
+# DISTRIBUTION. Any of those leaked from a previous-version shell session
+# (e.g. `grove env` sourced into rc, then upgraded) sends the wrapper at
+# a stale releases/<vsn> dir and validation fails. See feedback #34.
+( unset $(env | awk -F= '/^RELEASE_/{print $1}')
+  "${grove_home}/elixir/bin/grove" eval 'IO.puts("ok")' </dev/null >/dev/null 2>"$validate_log" ) || validate_ok=0
 "${grove_home}/bin/grove" --version </dev/null >/dev/null 2>>"$validate_log" || validate_ok=0
 
 # ── ui: validate (bar 3 green) ─────────────────────────────
