@@ -436,6 +436,7 @@ rm -rf "$staging"
 # ── permissions (parallel) ──────────────────────────────────
 chmod +x "${grove_home}/bin/grove" &
 chmod +x "${grove_home}/bin/grove-bridge" 2>/dev/null &
+chmod +x "${grove_home}/bin/grove-pty" 2>/dev/null &
 chmod +x "${grove_home}/erts/erts-"*/bin/* 2>/dev/null &
 chmod +x "${grove_home}/elixir/bin/"* 2>/dev/null &
 wait
@@ -445,6 +446,7 @@ if [[ "$os" == "darwin" ]]; then
     xattr -dr com.apple.quarantine "${grove_home}/elixir/" 2>/dev/null &
     xattr -d com.apple.quarantine "${grove_home}/bin/grove" 2>/dev/null &
     xattr -d com.apple.quarantine "${grove_home}/bin/grove-bridge" 2>/dev/null &
+    xattr -d com.apple.quarantine "${grove_home}/bin/grove-pty" 2>/dev/null &
     wait
 fi
 
