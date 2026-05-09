@@ -381,6 +381,18 @@ for f in "${staging}/bin/grove" \
     [[ -s "$f" ]] || die "Extraction verification failed: $f missing or empty"
 done
 
+# Verify the bundled VM was actually extracted. The Elixir release is
+# built with include_erts: false and depends on env.sh prepending
+# erts-VSN/bin to PATH. If ERTS is missing or truncated the daemon
+# silently falls back to whatever `erl` happens to be on the user's
+# shell PATH, which usually mismatches OTP versions and crashes boot
+# with `load_failed`.
+if [[ "$skip_erts" -eq 0 ]]; then
+    erts_erl=$(ls "${staging}/erts/erts-"*/bin/erl 2>/dev/null | head -1)
+    [[ -x "$erts_erl" ]] \
+        || die "Extraction verification failed: bundled erl missing or non-executable in ${staging}/erts/"
+fi
+
 # ── ui: extract (bar 2 green) ──────────────────────────────
 for pct in 25 50 75 100; do
     ui_redraw "$white" "$header" \
