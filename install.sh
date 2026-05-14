@@ -203,19 +203,46 @@ done
 # `mkdir` is atomic across all POSIX filesystems — the only process
 # that succeeds is the one that created the dir. Works uniformly on
 # macOS (no flock) and linux. The dir is removed by the EXIT trap.
+#
+# Stale-lock detection has to survive PID recycling: a previous
+# install can exit without cleaning up, and the OS later assigns the
+# same pid to an unrelated process (often a grove-bridge child of
+# the daemon, which routinely lives on whatever pid the kernel
+# reuses). `kill -0` alone is fooled — it sees a live process and
+# refuses to proceed forever. We record both the pid AND the full
+# command line of the owner, and on stale-check we re-read the live
+# command line; only a match counts as "really still running."
 mkdir -p "${grove_home}"
 lock_dir="${grove_home}/.up.lock.d"
+
+# Capture our own command line BEFORE acquiring so we can write it
+# atomically once we win the mkdir race.
+self_cmd=$(ps -o command= -p $$ 2>/dev/null || echo "")
+
 if ! mkdir "${lock_dir}" 2>/dev/null; then
-    # Lock exists — check if the owner is still alive.
-    owner_pid=$(cat "${lock_dir}/pid" 2>/dev/null || echo "")
+    owner_pid=$(sed -n '1p' "${lock_dir}/pid" 2>/dev/null || echo "")
+    owner_cmd=$(sed -n '2,$p' "${lock_dir}/pid" 2>/dev/null || echo "")
+
     if [[ "$owner_pid" =~ ^[0-9]+$ ]] && kill -0 "$owner_pid" 2>/dev/null; then
-        die "another install is already running (pid ${owner_pid}, lock: ${lock_dir})"
+        current_cmd=$(ps -o command= -p "$owner_pid" 2>/dev/null || echo "")
+
+        # Only block if we have a recorded owner_cmd AND it still
+        # matches what that pid is running NOW. Mismatch = pid was
+        # recycled by an unrelated process; missing owner_cmd =
+        # pre-fix lock dir, treat as stale.
+        if [[ -n "$owner_cmd" && "$current_cmd" == "$owner_cmd" ]]; then
+            die "another install is already running (pid ${owner_pid}, lock: ${lock_dir})"
+        fi
     fi
-    # Stale lock — clear and retry once.
+
+    # Stale (dead owner, or live pid running a different command).
     rm -rf "${lock_dir}"
     mkdir "${lock_dir}" || die "could not acquire lock: ${lock_dir}"
 fi
-echo "$$" > "${lock_dir}/pid"
+{
+    echo "$$"
+    echo "$self_cmd"
+} > "${lock_dir}/pid"
 
 # ── check ERTS cache ────────────────────────────────────────
 # Skip ERTS download only if the installed tree has every required OTP lib.
