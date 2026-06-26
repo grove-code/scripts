@@ -1,67 +1,36 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+# grove uninstaller (v1 versioned-dir layout). Stops the server, removes the
+# `grove` symlink from PATH, and deletes the data dir. Mirrored to
+# grove-code/scripts (served at grove-code.dev/uninstall.sh) by mirror-scripts.yml.
+#
+# Usage:
+#   curl -fsSL https://grove-code.dev/uninstall.sh | sh
+#   GROVE_HOME=/custom sh uninstall.sh
+#
+# Environment:
+#   GROVE_HOME   data dir (default: ~/.grove)
+set -eu
 
-install_dir="${HOME}/.grove"
+GROVE_HOME="${GROVE_HOME:-$HOME/.grove}"
 
-echo "grove Uninstaller"
-echo ""
-echo "This will remove:"
-echo "  • ${install_dir}/"
-echo "  • ~/.local/bin/grove symlink (if exists)"
-echo "  • PATH entry from shell config (if added)"
-echo ""
-echo "WARNING: All cloned repositories in ${install_dir}/code/ will be deleted!"
-echo ""
-read -rp "Continue? [y/N] " -n 1
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-  echo "Uninstall cancelled."
-  exit 0
+# Stop a running server via the installed binary (best-effort).
+if [ -x "$GROVE_HOME/current/bin/grove" ]; then
+  GROVE_HOME="$GROVE_HOME" "$GROVE_HOME/current/bin/grove" off >/dev/null 2>&1 || true
 fi
 
-# Stop the daemon before removing files so a running beam doesn't orphan
-# on port 7777 and block the next install. `grove off` already falls back
-# to lsof + SIGKILL if the graceful shutdown hangs.
-if [ -x "${install_dir}/bin/grove" ]; then
-  "${install_dir}/bin/grove" off 2>/dev/null || true
-fi
-
-# Remove symlink from ~/.local/bin if it exists
-if [ -L "$HOME/.local/bin/grove" ]; then
-  rm -f "$HOME/.local/bin/grove"
-  echo "✓ Removed symlink from ~/.local/bin/grove"
-fi
-
-# Remove installation directory
-if [ -d "$install_dir" ]; then
-  echo "Removing ${install_dir}..."
-  rm -rf "$install_dir"
-  echo "✓ Removed installation directory"
-else
-  echo "⊘ Installation directory not found"
-fi
-
-# Remove PATH from shell config files
-remove_path_from_file() {
-  local file="$1"
-  if [ -f "$file" ]; then
-    if grep -q ".grove/bin" "$file" 2>/dev/null; then
-      sed -i.bak '/# grove/d' "$file"
-      sed -i.bak '/\.grove\/bin/d' "$file"
-      sed -i.bak '/^$/N;/^\n$/d' "$file"
-      rm -f "${file}.bak"
-      echo "✓ Removed PATH from $file"
-    fi
+# Remove the PATH symlink wherever install.sh may have placed it. Only unlink a
+# symlink that actually points into GROVE_HOME — never a user's unrelated binary.
+for d in /usr/local/bin "$HOME/.local/bin"; do
+  link="$d/grove"
+  if [ -L "$link" ]; then
+    target=$(readlink "$link")
+    case "$target" in
+    "$GROVE_HOME"/*) rm -f "$link" && echo "grove: unlinked $link" ;;
+    esac
   fi
-}
+done
 
-remove_path_from_file "${HOME}/.zshenv"
-remove_path_from_file "${HOME}/.zshrc"
-remove_path_from_file "${HOME}/.bash_profile"
-remove_path_from_file "${HOME}/.bashrc"
-
-echo ""
-echo "✓ Uninstall complete!"
-echo ""
-echo "Reload your shell or run:"
-echo "  source ~/.zshrc  # or ~/.bashrc"
+# Remove the data dir (versions, current/previous symlinks, manifest, worktrees).
+rm -rf "$GROVE_HOME"
+echo "grove: removed $GROVE_HOME"
+echo "grove: done."
