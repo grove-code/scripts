@@ -46,6 +46,13 @@ case "$(uname -s)" in
 esac
 target="${arch}-${os}"
 
+# The release no longer builds Intel macOS (no macos-13 runners) — reject it up
+# front with a clear "unsupported platform" rather than letting the fetch below
+# fail with a misleading asset-unreachable error on a tag that never had it.
+case "$target" in
+  x86_64-darwin) die "unsupported platform: $target (Intel macOS is not built; use an Apple Silicon mac)" ;;
+esac
+
 # Resolve the release tag for the channel (unless a version was pinned). canary
 # is a prerelease tag suffix (v<semver>-canary.N); stable is the latest release.
 if [ -z "$version" ]; then
