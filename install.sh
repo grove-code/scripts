@@ -15,6 +15,9 @@
 # Environment:
 #   channel      release channel: stable (default), canary
 #   GROVE_HOME   data dir (default: ~/.grove)
+#
+# Records the resolved channel in $GROVE_HOME/channel so later `grove up` (no
+# --channel / GROVE_CHANNEL) keeps following it.
 set -euo pipefail
 
 repo="grove-code/downloads"
@@ -86,6 +89,17 @@ chmod +x "$tmp/grove"
 # verifying the checksum sidecar we just staged. No server is running on a clean
 # machine, so this only lays versions/<vsn> and flips current.
 GROVE_HOME="$grove_home" GROVE_INSTALL_BASE_URL="$stage" "$tmp/grove" up --version "$vsn"
+
+# Persist the channel this box follows so `grove up` (no --channel/GROVE_CHANNEL)
+# keeps pulling from it. Derive it from the *resolved tag*, not $channel: a pinned
+# `bash -s v0.1.1-canary.2` runs with channel=stable (the default) but is really a
+# canary box — keying off $channel would strand it on stable. A prerelease suffix
+# (-<channel>.N) ⇒ that channel; a bare semver ⇒ stable.
+case "$vsn" in
+  *-*.[0-9]*) resolved_channel="${vsn##*-}"; resolved_channel="${resolved_channel%.*}" ;;
+  *) resolved_channel="stable" ;;
+esac
+printf '%s\n' "$resolved_channel" >"$grove_home/channel"
 
 # Put `grove` on PATH via a stable symlink → current/bin/grove. A running process
 # keeps its mapped binary, so future flips never disturb it.
